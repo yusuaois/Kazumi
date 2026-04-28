@@ -6,6 +6,7 @@ import 'package:kazumi/pages/player/smallest_player_item_panel.dart';
 import 'package:kazumi/utils/constants.dart';
 import 'package:kazumi/utils/logger.dart';
 import 'package:kazumi/utils/utils.dart';
+import 'package:kazumi/utils/pip_utils.dart';
 import 'package:kazumi/utils/webdav.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/gestures.dart';
@@ -30,6 +31,7 @@ import 'package:kazumi/pages/player/player_item_surface.dart';
 import 'package:mobx/mobx.dart' as mobx;
 import 'package:kazumi/pages/my/my_controller.dart';
 import 'package:saver_gallery/saver_gallery.dart';
+import 'package:kazumi/utils/audio_controller.dart';
 
 class PlayerItem extends StatefulWidget {
   const PlayerItem({
@@ -72,6 +74,7 @@ class _PlayerItemState extends State<PlayerItem>
   final HistoryController historyController = Modular.get<HistoryController>();
   final CollectController collectController = Modular.get<CollectController>();
   final MyController myController = Modular.get<MyController>();
+  final AudioController _audioController = AudioController();
   late Map<String, List<String>> keyboardShortcuts;
   late List<String> keyboardActionsNeedLongPress;
   late Map<String, void Function()> keyboardActions;
@@ -108,6 +111,7 @@ class _PlayerItemState extends State<PlayerItem>
   // 硬件解码
   late bool haEnable;
   late bool autoPlayNext;
+  late bool backgroundPlayback;
 
   Timer? hideTimer;
   Timer? playerTimer;
@@ -121,18 +125,81 @@ class _PlayerItemState extends State<PlayerItem>
 
   double lastPlayerSpeed = 1.0;
   int episodeNum = 0;
+  bool? _lastPipPlaying;
+  bool? _lastPipDanmakuEnabled;
 
   late mobx.ReactionDisposer _fullscreenListener;
 
   /// 处理 Android/iOS 应用后台或熄屏
   @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
+  void didChangeAppLifecycleState(AppLifecycleState state) async {
     super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.paused &&
+        !backgroundPlayback &&
+        playerController.mediaPlayer != null &&
+        playerController.playerPlaying) {
+      try {
+        await playerController.pause(enableSync: false);
+      } catch (_) {}
+      return;
+    }
     try {
       if (playerController.playerPlaying) {
         playerController.danmakuController.resume();
       }
     } catch (_) {}
+  }
+
+  Future<void> _syncAndroidAutoEnterPIPSetting() async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    final bool autoEnterPIPEnabled = setting.get(
+      SettingBoxKey.androidAutoEnterPIP,
+      defaultValue: false,
+    );
+    try {
+      await PipUtils.setAndroidAutoEnterPIPEnabled(autoEnterPIPEnabled);
+    } catch (e) {
+      KazumiLogger().w(
+        'PlayerItem: failed to sync android auto enter pip setting',
+        error: e,
+      );
+    }
+  }
+
+  Future<void> _syncAndroidPIPPlayerPageState(bool inPlayerPage) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    try {
+      await PipUtils.setAndroidPIPInPlayerPage(inPlayerPage);
+    } catch (e) {
+      KazumiLogger().w(
+        'PlayerItem: failed to sync android pip player page state',
+        error: e,
+      );
+    }
+  }
+
+  Future<void> _updateAndroidPIPActions({bool force = false}) async {
+    if (!Platform.isAndroid) {
+      return;
+    }
+    final bool playing = playerController.playing;
+    final bool danmakuEnabled = playerController.danmakuOn;
+    if (!force &&
+        _lastPipPlaying == playing &&
+        _lastPipDanmakuEnabled == danmakuEnabled) {
+      return;
+    }
+
+    _lastPipPlaying = playing;
+    _lastPipDanmakuEnabled = danmakuEnabled;
+    await PipUtils.updateAndroidPIPActions(
+      playing: playing,
+      danmakuEnabled: danmakuEnabled,
+    );
   }
 
   void _loadShortcuts() {
@@ -268,7 +335,8 @@ class _PlayerItemState extends State<PlayerItem>
   }
 
   Future<void> handleShortcutForwardRepeat() async {
-    final double defaultShortcutForwardPlaySpeed = setting.get(SettingBoxKey.defaultShortcutForwardPlaySpeed, defaultValue: 2.0);
+    final double defaultShortcutForwardPlaySpeed = setting
+        .get(SettingBoxKey.defaultShortcutForwardPlaySpeed, defaultValue: 2.0);
     if (playerController.playerSpeed < defaultShortcutForwardPlaySpeed) {
       playerController.showPlaySpeed = true;
       setPlaybackSpeed(defaultShortcutForwardPlaySpeed);
@@ -369,11 +437,13 @@ class _PlayerItemState extends State<PlayerItem>
         playerController.danmakuOn = false;
       });
       setting.put(SettingBoxKey.danmakuEnabledByDefault, false);
+      unawaited(_updateAndroidPIPActions(force: true));
       return;
     }
     // if false and empty, show dialog.
     if (playerController.danDanmakus.isEmpty) {
       showDanmakuSwitch();
+      unawaited(_updateAndroidPIPActions(force: true));
       return;
     }
     // turn on danmaku.
@@ -381,6 +451,7 @@ class _PlayerItemState extends State<PlayerItem>
       playerController.danmakuOn = true;
     });
     setting.put(SettingBoxKey.danmakuEnabledByDefault, true);
+    unawaited(_updateAndroidPIPActions(force: true));
   }
 
   Future<void> _uploadHistoryToWebDav() async {
@@ -389,6 +460,78 @@ class _PlayerItemState extends State<PlayerItem>
         var webDav = WebDav();
         await webDav.updateHistory();
       } catch (_) {}
+    }
+  }
+
+  Future<void> _bindAudioService() async {
+    try {
+      await _audioController.bindCallbacks(
+        onPlay: () => playerController.play(),
+        onPause: () => playerController.pause(),
+        onSkipToNext: () => handlePreNextEpisode('next'),
+        onSkipToPrevious: () => handlePreNextEpisode('prev'),
+        onSeek: (position) => playerController.seek(position),
+      );
+      _syncAudioServiceState();
+    } catch (e) {
+      KazumiLogger()
+          .w('AudioController: failed to bind callbacks', error: e);
+    }
+  }
+
+  void _syncAudioServiceState() {
+    try {
+      final currentRoad = videoPageController.currentRoad;
+      final currentEpisode = videoPageController.currentEpisode;
+      if (videoPageController.roadList.isEmpty ||
+          currentRoad < 0 ||
+          currentRoad >= videoPageController.roadList.length) {
+        return;
+      }
+      final currentRoadData = videoPageController.roadList[currentRoad];
+      if (currentEpisode <= 0 || currentRoadData.identifier.isEmpty) return;
+      final safeEpisodeIndex = currentEpisode - 1;
+      if (safeEpisodeIndex >= currentRoadData.identifier.length) return;
+
+      if (playerController.duration <= Duration.zero) return;
+
+      final canSkipToPrevious = currentEpisode > 1;
+      final canSkipToNext = currentEpisode < currentRoadData.data.length;
+      final bangumiTitle = videoPageController.bangumiItem.nameCn.isNotEmpty
+          ? videoPageController.bangumiItem.nameCn
+          : videoPageController.bangumiItem.name;
+      final episodeTitle = currentRoadData.identifier[safeEpisodeIndex];
+      final artworkUrl = videoPageController.bangumiItem.images['large'];
+      final artworkUri = (artworkUrl == null || artworkUrl.isEmpty)
+          ? null
+          : Uri.tryParse(artworkUrl);
+
+      unawaited(
+        _audioController.updateSession(
+          mediaId:
+              '${videoPageController.bangumiItem.id}_${currentRoad}_$currentEpisode',
+          title: bangumiTitle,
+          album: videoPageController.isOfflineMode
+              ? videoPageController.offlinePluginName
+              : videoPageController.currentPlugin.name,
+          artist: episodeTitle,
+          artUri: artworkUri,
+          duration: playerController.duration,
+          playing: playerController.playing,
+          loading: playerController.loading,
+          buffering: playerController.isBuffering,
+          completed: playerController.completed,
+          updatePosition: playerController.currentPosition,
+          bufferedPosition: playerController.buffer,
+          speed: playerController.playerSpeed,
+          queueIndex: safeEpisodeIndex,
+          canSkipToNext: canSkipToNext,
+          canSkipToPrevious: canSkipToPrevious,
+        ),
+      );
+    } catch (e) {
+      KazumiLogger()
+          .w('AudioController: failed to sync playback state', error: e);
     }
   }
 
@@ -402,12 +545,14 @@ class _PlayerItemState extends State<PlayerItem>
   void handleProgressBarDragStart(ThumbDragDetails details) {
     playerTimer?.cancel();
     playerController.pause(enableSync: false);
+    _syncAudioServiceState();
     hideTimer?.cancel();
     playerController.showVideoController = true;
   }
 
   void handleProgressBarDragEnd() {
     playerController.play(enableSync: false);
+    _syncAudioServiceState();
     startHideTimer();
     playerTimer?.cancel();
     playerTimer = getPlayerTimer();
@@ -657,6 +802,8 @@ class _PlayerItemState extends State<PlayerItem>
       playerController.buffer = playerController.playerBuffer;
       playerController.duration = playerController.playerDuration;
       playerController.completed = playerController.playerCompleted;
+      unawaited(_updateAndroidPIPActions());
+      _syncAudioServiceState();
       // 弹幕相关
       if (playerController.currentPosition.inMicroseconds != 0 &&
           playerController.playerPlaying == true &&
@@ -723,7 +870,9 @@ class _PlayerItemState extends State<PlayerItem>
         });
       }
       // 历史记录相关
-      if (playerController.playerPlaying && !videoPageController.loading) {
+      if (playerController.playerPlaying &&
+          !videoPageController.loading &&
+          !videoPageController.isOfflineMode) {
         if (!WebDav().isHistorySyncing) {
           final pluginName = videoPageController.isOfflineMode
               ? videoPageController.offlinePluginName
@@ -1306,10 +1455,31 @@ class _PlayerItemState extends State<PlayerItem>
         _handleFullscreenChange(context);
       },
     );
-    // workaround for #214
-    if (Platform.isIOS) {
-      FlutterVolumeController.setIOSAudioSessionCategory(
-          category: AudioSessionCategory.playback);
+    if (Platform.isAndroid) {
+      PipUtils.initPipHandler(
+        onAction: (action) async {
+          if (!mounted) return;
+
+          switch (action) {
+            case 'play_pause':
+              playerController.playOrPause();
+              break;
+
+            case 'toggle_danmaku':
+              handleDanmaku();
+              break;
+
+            case 'forward':
+              await skipOP();
+              break;
+          }
+
+          await _updateAndroidPIPActions(force: true);
+        },
+      );
+      unawaited(_syncAndroidAutoEnterPIPSetting());
+      unawaited(_syncAndroidPIPPlayerPageState(true));
+      unawaited(_updateAndroidPIPActions(force: true));
     }
     WidgetsBinding.instance.addObserver(this);
     animationController ??= AnimationController(
@@ -1347,10 +1517,13 @@ class _PlayerItemState extends State<PlayerItem>
         setting.get(SettingBoxKey.danmakuFontWeight, defaultValue: 4);
     _danmakuUseSystemFont =
         setting.get(SettingBoxKey.useSystemFont, defaultValue: false);
-    _danmakuBorderSize = 
+    _danmakuBorderSize =
         setting.get(SettingBoxKey.danmakuBorderSize, defaultValue: 1.5);
     haEnable = setting.get(SettingBoxKey.hAenable, defaultValue: true);
     autoPlayNext = setting.get(SettingBoxKey.autoPlayNext, defaultValue: true);
+    backgroundPlayback =
+        setting.get(SettingBoxKey.backgroundPlayback, defaultValue: false);
+    unawaited(_bindAudioService());
     playerTimer = getPlayerTimer();
     windowManager.addListener(this);
     displayVideoController();
@@ -1371,6 +1544,10 @@ class _PlayerItemState extends State<PlayerItem>
     animationController?.dispose();
     animationController = null;
     _disposePlayerMenu();
+    if (Platform.isAndroid) {
+      unawaited(_syncAndroidPIPPlayerPageState(false));
+      PipUtils.disposePipHandler();
+    }
     // Reset player panel state
     playerController.lockPanel = false;
     playerController.showVideoController = true;
@@ -1381,6 +1558,8 @@ class _PlayerItemState extends State<PlayerItem>
     playerController.brightnessSeeking = false;
     playerController.volumeSeeking = false;
     playerController.canHidePlayerPanel = true;
+    unawaited(_audioController.deactivate());
+    _audioController.clearCallbacks();
     super.dispose();
   }
 

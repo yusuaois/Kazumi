@@ -9,7 +9,7 @@ import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/modules/download/download_module.dart';
 import 'package:kazumi/repositories/download_repository.dart';
 import 'package:kazumi/utils/download_manager.dart';
-import 'package:kazumi/providers/providers.dart';
+import 'package:kazumi/providers/video/providers.dart';
 import 'package:kazumi/bean/dialog/dialog_helper.dart';
 import 'package:mobx/mobx.dart';
 import 'package:kazumi/utils/utils.dart';
@@ -53,7 +53,7 @@ abstract class _VideoPageController with Store {
   @observable
   bool isCommentsAscending = false;
 
-  /// 画中画状态
+  /// 桌面画中画状态，Android 画中画状态不需要单独维护，进入画中画后会直接切换到系统的全局播放器界面
   @observable
   bool isPip = false;
 
@@ -189,7 +189,7 @@ abstract class _VideoPageController with Store {
     errorMessage = null;
 
     if (isOfflineMode) {
-      await _changeOfflineEpisode(episode, offset);
+      await _changeOfflineEpisode(episode, 0);
       return;
     }
 
@@ -246,6 +246,8 @@ abstract class _VideoPageController with Store {
       episodeTitle: roadList[currentRoad].identifier[episode - 1],
       referer: '',
       currentRoad: currentRoad,
+      coverUrl: bangumiItem.images['large'],
+      bangumiName: bangumiItem.nameCn.isNotEmpty ? bangumiItem.nameCn : bangumiItem.name,
     );
 
     final playerController = Modular.get<PlayerController>();
@@ -306,6 +308,8 @@ abstract class _VideoPageController with Store {
         episodeTitle: roadList[currentRoad].identifier[currentEpisode - 1],
         referer: currentPlugin.referer,
         currentRoad: currentRoad,
+        coverUrl: bangumiItem.images['large'],
+        bangumiName: bangumiItem.nameCn.isNotEmpty ? bangumiItem.nameCn : bangumiItem.name,
       );
 
       final playerController = Modular.get<PlayerController>();
@@ -336,10 +340,9 @@ abstract class _VideoPageController with Store {
   Future<void> queryBangumiEpisodeCommentsByID(int id, int episode) async {
     episodeCommentsList.clear();
     episodeInfo = await BangumiHTTP.getBangumiEpisodeByID(id, episode);
-    await BangumiHTTP.getBangumiCommentsByEpisodeID(episodeInfo.id)
-        .then((value) {
-      episodeCommentsList.addAll(value.commentList);
-    });
+    final value =
+        await BangumiHTTP.getBangumiCommentsByEpisodeID(episodeInfo.id);
+    episodeCommentsList.addAll(value.commentList);
     if (!isCommentsAscending) {
       episodeCommentsList
           .sort((a, b) => b.comment.createdAt.compareTo(a.comment.createdAt));
