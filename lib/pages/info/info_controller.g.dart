@@ -106,15 +106,32 @@ mixin _$InfoController on _InfoController, Store {
     });
   }
 
+  late final _$historyListAtom =
+      Atom(name: '_InfoController.historyList', context: context);
+
+  @override
+  ObservableList<History> get historyList {
+    _$historyListAtom.reportRead();
+    return super.historyList;
+  }
+
+  @override
+  set historyList(ObservableList<History> value) {
+    _$historyListAtom.reportWrite(value, super.historyList, () {
+      super.historyList = value;
+    });
+  }
+
   @override
   String toString() {
     return '''
-isLoading: ${isLoading},
-pluginSearchResponseList: ${pluginSearchResponseList},
-pluginSearchStatus: ${pluginSearchStatus},
-commentsList: ${commentsList},
-characterList: ${characterList},
-staffList: ${staffList}
+	isLoading: ${isLoading},
+	pluginSearchResponseList: ${pluginSearchResponseList},
+	pluginSearchStatus: ${pluginSearchStatus},
+	commentsList: ${commentsList},
+	characterList: ${characterList},
+	staffList: ${staffList},
+	historyList: ${historyList}
     ''';
   }
 }

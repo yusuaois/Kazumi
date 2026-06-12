@@ -11,6 +11,8 @@ import 'package:kazumi/services/logging/logger.dart';
 import 'package:kazumi/modules/comments/comment_item.dart';
 import 'package:kazumi/modules/characters/character_item.dart';
 import 'package:kazumi/modules/staff/staff_item.dart';
+import 'package:kazumi/modules/history/history_module.dart';
+import 'package:kazumi/repositories/history_repository.dart';
 
 part 'info_controller.g.dart';
 
@@ -37,6 +39,11 @@ abstract class _InfoController with Store {
 
   @observable
   var staffList = ObservableList<StaffFullItem>();
+
+  @observable
+  var historyList = ObservableList<History>();
+
+  final IHistoryRepository _historyRepository = Modular.get<IHistoryRepository>();
 
   bool _isFillingInterestUserProfile = false;
 
@@ -201,6 +208,17 @@ abstract class _InfoController with Store {
     });
     KazumiLogger()
         .i('InfoController: loaded staff list length ${staffList.length}');
+  }
+
+  void loadBangumiHistory() {
+    historyList.clear();
+    final allHistories = _historyRepository.getAllHistories();
+    final filtered = allHistories
+        .where((h) => h.bangumiItem.id == bangumiItem.id)
+        .toList();
+    historyList.addAll(filtered);
+    KazumiLogger()
+        .i('InfoController: loaded history list length ${historyList.length}');
   }
 
   Future<bool> rateBangumi(RatingReviewResult data,

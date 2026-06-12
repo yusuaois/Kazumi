@@ -5,11 +5,13 @@ import 'package:kazumi/bean/widget/error_widget.dart';
 import 'package:kazumi/bean/card/comments_card.dart';
 import 'package:kazumi/bean/card/character_card.dart';
 import 'package:kazumi/bean/card/staff_card.dart';
+import 'package:kazumi/bean/card/bangumi_history_card.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 import 'package:kazumi/modules/bangumi/bangumi_item.dart';
 import 'package:kazumi/modules/comments/comment_item.dart';
 import 'package:kazumi/modules/characters/character_item.dart';
 import 'package:kazumi/modules/staff/staff_item.dart';
+import 'package:kazumi/modules/history/history_module.dart';
 import 'package:kazumi/utils/device.dart';
 
 class InfoTabView extends StatefulWidget {
@@ -31,6 +33,9 @@ class InfoTabView extends StatefulWidget {
     this.onCommentsTabSelected,
     required this.characterList,
     required this.staffList,
+    required this.historyList,
+    required this.historyIsLoading,
+    required this.historyIsEmpty,
     required this.isLoading,
   });
 
@@ -50,6 +55,9 @@ class InfoTabView extends StatefulWidget {
   final List<CommentItem> commentsList;
   final List<CharacterItem> characterList;
   final List<StaffFullItem> staffList;
+  final List<History> historyList;
+  final bool historyIsLoading;
+  final bool historyIsEmpty;
   final bool isLoading;
 
   @override
@@ -533,6 +541,121 @@ class _InfoTabViewState extends State<InfoTabView>
     );
   }
 
+  Widget get historyListBody {
+    return Builder(
+      builder: (BuildContext context) {
+        return CustomScrollView(
+          scrollBehavior: const ScrollBehavior().copyWith(
+            scrollbars: false,
+          ),
+          key: const PageStorageKey<String>('历史记录'),
+          slivers: <Widget>[
+            SliverOverlapInjector(
+              handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+            ),
+            SliverLayoutBuilder(builder: (context, _) {
+              if (widget.historyList.isNotEmpty) {
+                return SliverList.separated(
+                  itemCount: widget.historyList.length,
+                  itemBuilder: (context, index) {
+                    return SafeArea(
+                      top: false,
+                      bottom: false,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                          child: SizedBox(
+                            width: MediaQuery.sizeOf(context).width > maxWidth
+                                ? maxWidth
+                                : MediaQuery.sizeOf(context).width - 32,
+                            child: BangumiHistoryCardV(
+                              historyItem: widget.historyList[index],
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                  separatorBuilder: (BuildContext context, int index) {
+                    return const SizedBox(height: 4);
+                  },
+                );
+              }
+              if (widget.historyIsLoading) {
+                return SliverList.builder(
+                  itemCount: 4,
+                  itemBuilder: (context, _) {
+                    return SafeArea(
+                      top: false,
+                      bottom: false,
+                      child: Center(
+                        child: Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: SizedBox(
+                            width: MediaQuery.sizeOf(context).width > maxWidth
+                                ? maxWidth
+                                : MediaQuery.sizeOf(context).width - 32,
+                            child: Skeletonizer.zone(
+                              child: Card(
+                                elevation: 0,
+                                margin: const EdgeInsets.symmetric(
+                                    vertical: 4, horizontal: 8),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                                clipBehavior: Clip.antiAlias,
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Bone.circle(size: 80),
+                                      const SizedBox(width: 12),
+                                      Expanded(
+                                        child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                            Bone.text(width: 150),
+                                            const SizedBox(height: 6),
+                                            Bone.text(width: 100),
+                                            const SizedBox(height: 4),
+                                            Bone.text(width: 80),
+                                          ],
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                );
+              }
+              if (widget.historyIsEmpty) {
+                return const SliverFillRemaining(
+                  child: Center(
+                    child: Text('什么都没有找到 (´;ω;`)'),
+                  ),
+                );
+              }
+              return const SliverFillRemaining(
+                child: Center(
+                  child: Text('什么都没有找到 (´;ω;`)'),
+                ),
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return TabBarView(
@@ -591,6 +714,7 @@ class _InfoTabViewState extends State<InfoTabView>
           },
         ),
         staffListBody,
+        historyListBody,
       ],
     );
   }

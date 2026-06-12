@@ -37,6 +37,7 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     '角色',
     '评论',
     '制作人员',
+    '历史记录',
   ];
   static const int _commentsTabIndex = 1;
   static const Duration _minimumBangumiInfoLoadingDuration =
@@ -61,6 +62,8 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
   bool staffIsLoading = false;
   bool staffQueryTimeout = false;
   bool staffIsEmpty = false;
+  bool historyIsLoading = false;
+  bool historyIsEmpty = false;
   bool _showBangumiInfoSkeleton = false;
   int _fabTabIndex = 0;
 
@@ -134,6 +137,32 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     }
   }
 
+  void loadHistory() {
+    if (historyIsLoading) return;
+    setState(() {
+      historyIsLoading = true;
+      historyIsEmpty = false;
+    });
+    try {
+      infoController.loadBangumiHistory();
+      if (mounted) {
+        setState(() {
+          historyIsLoading = false;
+          if (infoController.historyList.isEmpty) {
+            historyIsEmpty = true;
+          }
+        });
+      }
+    } catch (e) {
+      KazumiLogger().e('InfoPage: failed to load history', error: e);
+      if (mounted) {
+        setState(() {
+          historyIsLoading = false;
+        });
+      }
+    }
+  }
+
   Future<void> loadMoreComments({bool loadMore = false}) async {
     if (commentsIsLoading) return;
     setState(() {
@@ -201,6 +230,7 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     infoController.characterList.clear();
     infoController.clearComments();
     infoController.staffList.clear();
+    infoController.historyList.clear();
     infoController.pluginSearchResponseList.clear();
     videoPageController.resetEpisodeState();
     // Search results can miss rating distribution or summaries, so fill those
@@ -238,6 +268,12 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
         !staffIsEmpty &&
         !staffQueryTimeout) {
       loadStaff();
+    }
+    if (index == 5 &&
+        infoController.historyList.isEmpty &&
+        !historyIsLoading &&
+        !historyIsEmpty) {
+      loadHistory();
     }
   }
 
@@ -286,6 +322,7 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
     infoController.characterList.clear();
     infoController.clearComments();
     infoController.staffList.clear();
+    infoController.historyList.clear();
     infoController.pluginSearchResponseList.clear();
     videoPageController.resetEpisodeState();
     sourceTabController.dispose();
@@ -478,6 +515,9 @@ class _InfoPageState extends State<InfoPage> with TickerProviderStateMixin {
                 onCommentsTabSelected: onCommentsTabSelected,
                 characterList: infoController.characterList,
                 staffList: infoController.staffList,
+                historyList: infoController.historyList,
+                historyIsLoading: historyIsLoading,
+                historyIsEmpty: historyIsEmpty,
                 isLoading: showBangumiInfoSkeleton,
               );
             }),
